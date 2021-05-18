@@ -1,0 +1,418 @@
+#include <Adafruit_GrayOLED.h>
+#include <gfxfont.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SPITFT.h>
+#include <Adafruit_SPITFT_Macros.h>
+
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+
+#define numRows 6
+#define numCols 7
+
+#define TFT_MISO  12
+#define TFT_SCK   13
+#define TFT_MOSI  11
+#define TFT_DC   9
+#define TFT_RESET  8
+#define TFT_CS  10
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
+
+const int buttonPin = 3;
+int board[6][7] = {0};
+boolean isGameOver = false; // boolean to see if the game's over
+int currentArrowColumn = 3; // the current column the arrow's pointing at
+int circleX[7] = {21, 55, 89, 123, 157, 191, 225};
+int circleY[6] = {50, 84, 118, 152, 186, 220};
+int arrowRect[7] = {18, 52, 86, 120, 154, 188, 222};
+int arrowTri[7] = {21, 55, 89, 123, 157, 191, 225};
+int selectedColumn; // the column the player decided to place their piece at
+int selectedRow; // the row of the piece that has last been placed
+int winner = 0; // winner's player number; initialized to zero so there's no winner
+int currentPlayer = 1; // the current player's number; flipped every turn
+uint16_t colors[] = {ILI9341_RED, ILI9341_YELLOW}; // or tft.color565
+
+/*
+ * Initial setup function. Runs only once.
+ */
+void setup()
+{
+  Serial.begin(9600);
+  delay(1500);
+  introText();
+  drawGameBoard();
+  tft.setTextSize(0);
+  tft.setCursor(240, 40);
+  pinMode(A0, INPUT);
+  pinMode(A1, INPUT);
+  pinMode(buttonPin, INPUT);
+}
+
+void introText() {
+  tft.begin();  
+  tft.setRotation(1);
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setTextSize(3);
+  tft.setTextWrap(0);
+  tft.println("Hello! Welcome to");
+  tft.println("Conner, Colin, and");
+  tft.println("Kenya's Game!");
+  delay(3000);
+  tft.fillScreen(ILI9341_BLACK);
+  tft.println(" CONNECT 4");
+  delay(1000);
+}
+
+void drawGameBoard() {
+  tft.fillScreen(ILI9341_BLACK);
+  tft.fillRoundRect(0, 30, 247, 210, 20, tft.color565(100, 255, 255));
+  tft.fillRect(arrowRect[currentArrowColumn], 0, 7, 16, ILI9341_WHITE);
+  tft.fillTriangle(arrowTri[currentArrowColumn], 25, arrowTri[currentArrowColumn]+10, 16, arrowTri[currentArrowColumn]-10, 16, ILI9341_WHITE);
+  for(int i=0; i<=6; i++) {
+  for(int j=0; j<=5; j++) {
+    tft.fillCircle(circleX[i], circleY[j], 15, ILI9341_BLACK);
+  }
+  }
+}
+
+/*
+ * Plays the game and continues to loop even after the game ends.
+ */
+void loop()
+{
+  while (!isGameOver)
+  {
+  tft.setTextSize(1);
+  tft.setTextWrap(1);
+  tft.fillRect(250, 20, 320, 240, ILI9341_BLACK);
+  tft.setCursor(0,45);
+  String s = "                                        ";
+  String a = "It is";
+  String b = "currently";
+  String c = "Player";
+  String d = "'s";
+  String e = "turn";
+  String sentence1 = s + a;
+  String sentence2 = s + b;
+  String sentence3 = s + c + currentPlayer + d;
+  String sentence4 = s + e;
+  tft.println(sentence1);
+  tft.println(sentence2);
+  tft.println(sentence3);
+  tft.println(sentence4);
+  selectedColumn = waitForPlayerChoice();
+  selectedRow = placePiece(selectedColumn, currentPlayer);
+  if (checkForFour(selectedRow, selectedColumn, currentPlayer))
+  {
+      isGameOver = true;
+      declareWinner(currentPlayer);
+      return;
+  }
+  flipTurn(currentPlayer);
+  }
+  int b = digitalRead(buttonPin);
+  if (b == LOW)
+  {
+  resetGame();
+  }
+}
+
+void resetGame()
+{
+   isGameOver = false;
+   tft.fillRect(arrowRect[currentArrowColumn], 0, 7, 16, ILI9341_BLACK);
+   currentArrowColumn = 3;
+   drawGameBoard();
+   for(int x = 0; x < numRows; x++)
+   {
+    for(int y = 0; y < numCols; y++)
+    {
+      board[x][y] = 0;
+    }
+   }
+}
+
+
+/*
+ * Flips the turn of the current player.
+ */
+void flipTurn(int playerNum)
+{
+   if (playerNum == 1)
+   {
+    currentPlayer = 2;
+   }
+   else
+   {
+    currentPlayer = 1;
+   }
+}
+
+/*
+ * Declares a winner to end the game.
+ */
+void declareWinner(int champion)
+{
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setTextSize(3);
+  String s = "The winner is";
+  String u = "Player ";
+  String t = "Congratulations!";
+  String congratulations = u + champion;
+  tft.setCursor(35,60);
+  tft.println(s);
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setCursor(85,70);
+  tft.println(congratulations);
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setCursor(20,55);
+  tft.println(t);
+  Serial.println("Please press button to start a new game.");
+}
+
+/*
+ * Wait until a player makes a valid choice for their turn,
+ * and updates the arrow's location during the time they are choosing.
+ * @return the player's valid selected column
+ */
+int waitForPlayerChoice()
+{
+   boolean playerClicked = false;
+   while (!playerClicked)
+   {
+    int button;
+    float vert = analogRead(A0);
+    vert = (5./1023)*vert;
+    float horiz = analogRead(A1);
+    horiz = (5./1023)*horiz;
+    if (horiz <= 0.4)
+    {
+        moveLeft();
+    }
+    if (horiz >= 4)
+    {
+        moveRight();
+    }
+    button = digitalRead(buttonPin);
+    if (button == LOW)
+    {
+        if (isValidMove(currentArrowColumn))
+        {
+            playerClicked = true;
+        }
+        else
+        {
+            tft.setCursor(250,150);
+            tft.drawRect(250,79,320,240,ILI9341_BLACK);
+            tft.println("Invalid");
+            delay(1000);
+            tft.fillRect(250,79,320,240,ILI9341_BLACK);
+            tft.setCursor(250,150);
+            tft.println("Select");
+            tft.setCursor(250,159);
+            tft.println("another");
+            tft.setCursor(250,168);
+            tft.println("column");
+        }
+        delay(500);
+    }
+   }
+   return currentArrowColumn;
+}
+
+/*
+ * Move the arrow one column to the left when selecting and reflect it on the display.
+ */
+void moveLeft()
+{
+  if (currentArrowColumn > 0)
+  {
+      tft.fillRect(arrowRect[currentArrowColumn], 0, 7, 16, ILI9341_BLACK);
+      tft.fillTriangle(arrowTri[currentArrowColumn], 25, arrowTri[currentArrowColumn]+10, 16, arrowTri[currentArrowColumn]-10, 16, ILI9341_BLACK);
+      currentArrowColumn--;
+      tft.fillRect(arrowRect[currentArrowColumn], 0, 7, 16, ILI9341_WHITE);
+      tft.fillTriangle(arrowTri[currentArrowColumn], 25, arrowTri[currentArrowColumn]+10, 16, arrowTri[currentArrowColumn]-10, 16, ILI9341_WHITE);
+      delay(300);
+  }
+}
+
+/*
+ * Move the arrow one column to the right when selecting and reflect it on the display.
+ */
+void moveRight()
+{
+  if (currentArrowColumn < numCols - 1)
+  {
+      tft.fillRect(arrowRect[currentArrowColumn], 0, 7, 16, ILI9341_BLACK);
+      tft.fillTriangle(arrowTri[currentArrowColumn], 25, arrowTri[currentArrowColumn]+10, 16, arrowTri[currentArrowColumn]-10, 16, ILI9341_BLACK);
+      currentArrowColumn++;
+      tft.fillRect(arrowRect[currentArrowColumn], 0, 7, 16, ILI9341_WHITE);
+      tft.fillTriangle(arrowTri[currentArrowColumn], 25, arrowTri[currentArrowColumn]+10, 16, arrowTri[currentArrowColumn]-10, 16, ILI9341_WHITE);
+      delay(300);
+  }
+}
+
+/**
+ * Checks if the column has at least one open space, thus a valid move.
+ * @return true if player's selected column has space; otherwise,
+ *      false
+ */
+boolean isValidMove(int col)
+{
+   return board[0][col] == 0;
+}
+
+/*
+ * Places player's piece in the most bottom row possible in a specified column.
+ * @precondition there is at least one open space at the specified column.
+ * @return the row that the placed piece is inserted into
+ */
+int placePiece(int column, int playerNum)
+{
+   int r = 0;
+   int c = column;
+   while (r < numRows && !isOccupied(r,c))
+   {
+    r++;
+   }
+   board[r-1][c] = playerNum;
+   tft.fillCircle(circleX[c], circleY[r-1], 15, colors[playerNum - 1]);
+   return r-1;
+}
+
+/*
+ * Helper function to placePiece. Checks if the specified space is occupied.
+ * @return true if the space is occupied; otherwise,
+ *      false
+ */
+boolean isOccupied(int r, int c)
+{
+  return board[r][c] != 0;
+}
+
+/**
+ * Compares two integers and returns the larger of the two.
+ */
+ int new_max(int x, int y)
+ {
+  if (x > y)
+  {
+      return x;
+  }
+  return y;
+ }
+
+/*
+ * Checks all angles for a connected four.
+ * @return true if there is at least one row of four; otherwise,
+ *      false
+ */
+boolean checkForFour(int r, int c, int curPlayer)
+{
+   int backDiagonal = checkBD(r, c, curPlayer);
+   int diagonal = checkD(r, c, curPlayer);
+   int vertical = checkV(r, c, curPlayer);
+   int horizontal = checkH(r, c, curPlayer);
+   int count = new_max(backDiagonal,new_max(diagonal, new_max(vertical, horizontal)));
+   return count >= 4;
+}
+
+/*
+ * Checks the number of pieces aligned in a back diagonal line.
+ * @return the number of pieces in a back diagonal row
+ */
+int checkBD(int r, int c, int player)
+{
+   int count = 0;
+   int r_temp = r;
+   int c_temp = c;
+   while ((r_temp >= 0 && c_temp >= 0) && board[r_temp][c_temp] == player)
+   {
+    r_temp--;
+    c_temp--;
+    count++;
+   }
+   r_temp = r+1;
+   c_temp = c+1;
+   while ((r_temp < numRows && c_temp < numCols) && board[r_temp][c_temp] == player)
+   {
+    r_temp++;
+    c_temp++;
+    count++;
+   }
+   return count;
+}
+
+/*
+ *  Checks the number of pieces aligned in a diagonal line.
+ *  @return the number of pieces in a diagonal row
+ */
+int checkD(int r, int c, int player)
+{
+   int count = 0;
+   int r_temp = r;
+   int c_temp = c;
+   while ((r_temp < numRows && c_temp >= 0) && board[r_temp][c_temp] == player)
+   {
+    r_temp++;
+    c_temp--;
+    count++;
+   }
+   r_temp = r+1;
+   c_temp = c+1;
+   while ((r_temp >= 0 && c_temp < numCols) && board[r_temp][c_temp] == player)
+   {
+    r_temp--;
+    c_temp++;
+    count++;
+   }
+   return count;
+}
+
+/*
+ * Checks the number of pieces aligned in a vertical line.
+ * @return the number of pieces in a vertical row
+ */
+int checkV(int r, int c, int player)
+{
+   int count = 0;
+   int r_temp = r;
+   int c_temp = c;
+   while (r_temp >= 0 && board[r_temp][c_temp] == player)
+   {
+    r_temp--;
+    count++;
+   }
+   r_temp = r+1;
+   while (r_temp < numRows && board[r_temp][c_temp] == player)
+   {
+    r_temp++;
+    count++;
+   }
+   return count;
+}
+
+/*
+ * Checks the number of pieces aligned in a horizontal line.
+ * @return the number of pieces in a horizontal row
+ */
+int checkH(int r, int c, int player)
+{
+   int count = 0;
+   int r_temp = r;
+   int c_temp = c;
+   while (c_temp >= 0 && board[r_temp][c_temp] == player)
+   {
+    c_temp--;
+    count++;
+   }
+   c_temp = c+1;
+   while (c_temp < numCols && board[r_temp][c_temp] == player)
+   {
+    c_temp++;
+    count++;
+   }
+   return count;
+}
